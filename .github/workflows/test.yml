@@ -1,0 +1,30 @@
+name: Test
+
+on:
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: sweetnginx:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Check curl HTTP/3 support
+        run: curl --version | grep -q ngtcp2 || (echo "curl lacks HTTP/3 support" && exit 1)
+
+      - name: Run tests
+        run: bash test/run.sh sweetnginx:test

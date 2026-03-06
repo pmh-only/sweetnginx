@@ -1,0 +1,87 @@
+name: Check for component updates
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'  # Every Monday at 06:00 UTC
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch latest versions
+        id: versions
+        run: |
+          OPENRESTY_LATEST=$(curl -sf "https://hub.docker.com/v2/repositories/openresty/openresty/tags?page_size=100&ordering=last_updated" \
+            | jq -r '[.results[] | select(.name | test("^[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+-alpine$"))] | .[0].name' \
+            | sed 's/-alpine//')
+
+          CRS_LATEST=$(curl -sf https://api.github.com/repos/coreruleset/coreruleset/releases/latest \
+            | jq -r '.tag_name')
+
+          MODSEC_LATEST=$(curl -sf "https://api.github.com/repos/owasp-modsecurity/ModSecurity/tags?per_page=20" \
+            | jq -r '[.[] | select(.name | test("^v3"))][0].name')
+
+          MODSEC_NGINX_LATEST=$(curl -sf "https://api.github.com/repos/owasp-modsecurity/ModSecurity-nginx/tags?per_page=5" \
+            | jq -r '.[0].name')
+
+          OPENRESTY_CURRENT=$(grep -oP 'ARG OPENRESTY_VERSION=\K\S+' Dockerfile)
+          CRS_CURRENT=$(grep -oP 'ARG CRS_VERSION=\K\S+' Dockerfile)
+          MODSEC_CURRENT=$(grep -oP 'ARG MODSECURITY_VERSION=\K\S+' Dockerfile)
+          MODSEC_NGINX_CURRENT=$(grep -oP 'ARG MODSEC_NGINX_VERSION=\K\S+' Dockerfile)
+
+          echo "openresty_latest=$OPENRESTY_LATEST"         >> "$GITHUB_OUTPUT"
+          echo "crs_latest=$CRS_LATEST"                     >> "$GITHUB_OUTPUT"
+          echo "modsec_latest=$MODSEC_LATEST"               >> "$GITHUB_OUTPUT"
+          echo "modsec_nginx_latest=$MODSEC_NGINX_LATEST"   >> "$GITHUB_OUTPUT"
+          echo "openresty_current=$OPENRESTY_CURRENT"       >> "$GITHUB_OUTPUT"
+          echo "crs_current=$CRS_CURRENT"                   >> "$GITHUB_OUTPUT"
+          echo "modsec_current=$MODSEC_CURRENT"             >> "$GITHUB_OUTPUT"
+          echo "modsec_nginx_current=$MODSEC_NGINX_CURRENT" >> "$GITHUB_OUTPUT"
+
+          if [ "$OPENRESTY_LATEST" != "$OPENRESTY_CURRENT" ] || \
+             [ "$CRS_LATEST"       != "$CRS_CURRENT" ]       || \
+             [ "$MODSEC_LATEST"    != "$MODSEC_CURRENT" ]    || \
+             [ "$MODSEC_NGINX_LATEST" != "$MODSEC_NGINX_CURRENT" ]; then
+            echo "has_updates=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_updates=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update versions
+        if: steps.versions.outputs.has_updates == 'true'
+        run: |
+          sed -i "s/ARG OPENRESTY_VERSION=.*/ARG OPENRESTY_VERSION=${{ steps.versions.outputs.openresty_latest }}/" Dockerfile
+          sed -i "s/ARG CRS_VERSION=.*/ARG CRS_VERSION=${{ steps.versions.outputs.crs_latest }}/" Dockerfile
+          sed -i "s/ARG MODSECURITY_VERSION=.*/ARG MODSECURITY_VERSION=${{ steps.versions.outputs.modsec_latest }}/" Dockerfile
+          sed -i "s/ARG MODSEC_NGINX_VERSION=.*/ARG MODSEC_NGINX_VERSION=${{ steps.versions.outputs.modsec_nginx_latest }}/" Dockerfile
+
+          sed -i "s/| OpenResty | .* |/| OpenResty | ${{ steps.versions.outputs.openresty_latest }} |/" README.md
+          sed -i "s/| ModSecurity | .* |/| ModSecurity | ${{ steps.versions.outputs.modsec_latest }} |/" README.md
+          sed -i "s/| ModSecurity-nginx connector | .* |/| ModSecurity-nginx connector | ${{ steps.versions.outputs.modsec_nginx_latest }} |/" README.md
+          sed -i "s/| OWASP Core Rule Set | .* |/| OWASP Core Rule Set | ${{ steps.versions.outputs.crs_latest }} |/" README.md
+
+      - name: Create pull request
+        if: steps.versions.outputs.has_updates == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: "chore: update component versions"
+          title: "chore: update component versions"
+          body: |
+            Automated version bump:
+
+            | Component | Current | Latest |
+            |-----------|---------|--------|
+            | OpenResty | `${{ steps.versions.outputs.openresty_current }}` | `${{ steps.versions.outputs.openresty_latest }}` |
+            | ModSecurity | `${{ steps.versions.outputs.modsec_current }}` | `${{ steps.versions.outputs.modsec_latest }}` |
+            | ModSecurity-nginx | `${{ steps.versions.outputs.modsec_nginx_current }}` | `${{ steps.versions.outputs.modsec_nginx_latest }}` |
+            | CRS | `${{ steps.versions.outputs.crs_current }}` | `${{ steps.versions.outputs.crs_latest }}` |
+          branch: chore/version-updates
+          delete-branch: true
+          labels: dependencies
