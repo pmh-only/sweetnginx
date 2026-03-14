@@ -31,24 +31,31 @@ jobs:
           MODSEC_NGINX_LATEST=$(curl -sf "https://api.github.com/repos/owasp-modsecurity/ModSecurity-nginx/tags?per_page=5" \
             | jq -r '.[0].name')
 
+          OPENSSL_ECH_LATEST=$(curl -sf "https://api.github.com/repos/defo-project/openssl/tags?per_page=20" \
+            | jq -r '[.[] | select(.name | test("^[0-9]+\\.[0-9]+\\.[0-9]+-ech$"))][0].name')
+
           OPENRESTY_CURRENT=$(grep -oP 'ARG OPENRESTY_VERSION=\K\S+' Dockerfile)
           CRS_CURRENT=$(grep -oP 'ARG CRS_VERSION=\K\S+' Dockerfile)
           MODSEC_CURRENT=$(grep -oP 'ARG MODSECURITY_VERSION=\K\S+' Dockerfile)
           MODSEC_NGINX_CURRENT=$(grep -oP 'ARG MODSEC_NGINX_VERSION=\K\S+' Dockerfile)
+          OPENSSL_ECH_CURRENT=$(grep -oP 'ARG OPENSSL_ECH_TAG=\K\S+' Dockerfile)
 
-          echo "openresty_latest=$OPENRESTY_LATEST"         >> "$GITHUB_OUTPUT"
-          echo "crs_latest=$CRS_LATEST"                     >> "$GITHUB_OUTPUT"
-          echo "modsec_latest=$MODSEC_LATEST"               >> "$GITHUB_OUTPUT"
-          echo "modsec_nginx_latest=$MODSEC_NGINX_LATEST"   >> "$GITHUB_OUTPUT"
-          echo "openresty_current=$OPENRESTY_CURRENT"       >> "$GITHUB_OUTPUT"
-          echo "crs_current=$CRS_CURRENT"                   >> "$GITHUB_OUTPUT"
-          echo "modsec_current=$MODSEC_CURRENT"             >> "$GITHUB_OUTPUT"
-          echo "modsec_nginx_current=$MODSEC_NGINX_CURRENT" >> "$GITHUB_OUTPUT"
+          echo "openresty_latest=$OPENRESTY_LATEST"           >> "$GITHUB_OUTPUT"
+          echo "crs_latest=$CRS_LATEST"                       >> "$GITHUB_OUTPUT"
+          echo "modsec_latest=$MODSEC_LATEST"                 >> "$GITHUB_OUTPUT"
+          echo "modsec_nginx_latest=$MODSEC_NGINX_LATEST"     >> "$GITHUB_OUTPUT"
+          echo "openssl_ech_latest=$OPENSSL_ECH_LATEST"       >> "$GITHUB_OUTPUT"
+          echo "openresty_current=$OPENRESTY_CURRENT"         >> "$GITHUB_OUTPUT"
+          echo "crs_current=$CRS_CURRENT"                     >> "$GITHUB_OUTPUT"
+          echo "modsec_current=$MODSEC_CURRENT"               >> "$GITHUB_OUTPUT"
+          echo "modsec_nginx_current=$MODSEC_NGINX_CURRENT"   >> "$GITHUB_OUTPUT"
+          echo "openssl_ech_current=$OPENSSL_ECH_CURRENT"     >> "$GITHUB_OUTPUT"
 
-          if [ "$OPENRESTY_LATEST" != "$OPENRESTY_CURRENT" ] || \
-             [ "$CRS_LATEST"       != "$CRS_CURRENT" ]       || \
-             [ "$MODSEC_LATEST"    != "$MODSEC_CURRENT" ]    || \
-             [ "$MODSEC_NGINX_LATEST" != "$MODSEC_NGINX_CURRENT" ]; then
+          if [ "$OPENRESTY_LATEST"    != "$OPENRESTY_CURRENT" ]    || \
+             [ "$CRS_LATEST"          != "$CRS_CURRENT" ]          || \
+             [ "$MODSEC_LATEST"       != "$MODSEC_CURRENT" ]       || \
+             [ "$MODSEC_NGINX_LATEST" != "$MODSEC_NGINX_CURRENT" ] || \
+             [ "$OPENSSL_ECH_LATEST"  != "$OPENSSL_ECH_CURRENT" ]; then
             echo "has_updates=true" >> "$GITHUB_OUTPUT"
           else
             echo "has_updates=false" >> "$GITHUB_OUTPUT"
@@ -61,11 +68,13 @@ jobs:
           sed -i "s/ARG CRS_VERSION=.*/ARG CRS_VERSION=${{ steps.versions.outputs.crs_latest }}/" Dockerfile
           sed -i "s/ARG MODSECURITY_VERSION=.*/ARG MODSECURITY_VERSION=${{ steps.versions.outputs.modsec_latest }}/" Dockerfile
           sed -i "s/ARG MODSEC_NGINX_VERSION=.*/ARG MODSEC_NGINX_VERSION=${{ steps.versions.outputs.modsec_nginx_latest }}/" Dockerfile
+          sed -i "s/ARG OPENSSL_ECH_TAG=.*/ARG OPENSSL_ECH_TAG=${{ steps.versions.outputs.openssl_ech_latest }}/" Dockerfile
 
           sed -i "s/| OpenResty | .* |/| OpenResty | ${{ steps.versions.outputs.openresty_latest }} |/" README.md
           sed -i "s/| ModSecurity | .* |/| ModSecurity | ${{ steps.versions.outputs.modsec_latest }} |/" README.md
           sed -i "s/| ModSecurity-nginx connector | .* |/| ModSecurity-nginx connector | ${{ steps.versions.outputs.modsec_nginx_latest }} |/" README.md
           sed -i "s/| OWASP Core Rule Set | .* |/| OWASP Core Rule Set | ${{ steps.versions.outputs.crs_latest }} |/" README.md
+          sed -i "s/| ECH OpenSSL (defo-project) | .* |/| ECH OpenSSL (defo-project) | ${{ steps.versions.outputs.openssl_ech_latest }} |/" README.md
 
       - name: Create pull request
         if: steps.versions.outputs.has_updates == 'true'
@@ -82,6 +91,7 @@ jobs:
             | ModSecurity | `${{ steps.versions.outputs.modsec_current }}` | `${{ steps.versions.outputs.modsec_latest }}` |
             | ModSecurity-nginx | `${{ steps.versions.outputs.modsec_nginx_current }}` | `${{ steps.versions.outputs.modsec_nginx_latest }}` |
             | CRS | `${{ steps.versions.outputs.crs_current }}` | `${{ steps.versions.outputs.crs_latest }}` |
+            | ECH OpenSSL | `${{ steps.versions.outputs.openssl_ech_current }}` | `${{ steps.versions.outputs.openssl_ech_latest }}` |
           branch: chore/version-updates
           delete-branch: true
           labels: dependencies

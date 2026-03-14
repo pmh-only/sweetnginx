@@ -7,12 +7,23 @@ ARG MODSECURITY_VERSION=v3.0.14
 ARG MODSEC_NGINX_VERSION=v1.0.4
 ARG NGX_BROTLI_VERSION=v1.0.0rc
 ARG ZSTD_NGINX_VERSION=0.1.1
+ARG OPENSSL_ECH_TAG=3.9.0-ech
 
 RUN apk add --no-cache \
     git build-base autoconf automake libtool \
     pcre2-dev openssl-dev libxml2-dev curl-dev \
     yajl-dev geoip-dev lmdb-dev libmaxminddb-dev \
-    linux-headers brotli-dev zstd-dev
+    linux-headers brotli-dev zstd-dev perl zlib-dev
+
+# Clone ECH-capable OpenSSL and build the openssl CLI binary.
+# nginx's --with-openssl will later run 'make clean' and reconfigure this
+# directory, so the binary must be copied out before that happens.
+RUN git clone --depth 1 -b ${OPENSSL_ECH_TAG} \
+    https://github.com/defo-project/openssl /build/openssl-ech && \
+    cd /build/openssl-ech && \
+    perl Configure no-tests no-shared && \
+    make -j2 && \
+    cp apps/openssl /usr/local/bin/openssl-ech
 
 RUN git clone --depth 1 -b ${MODSECURITY_VERSION} \
     https://github.com/owasp-modsecurity/ModSecurity /build/ModSecurity && \
@@ -38,13 +49,38 @@ RUN wget -O /tmp/openresty.tar.gz \
 RUN cd /build/openresty-${OPENRESTY_VERSION} && \
     ./configure \
       --with-compat \
+      --with-file-aio \
+      --with-http_addition_module \
+      --with-http_auth_request_module \
+      --with-http_dav_module \
+      --with-http_flv_module \
+      --with-http_gunzip_module \
+      --with-http_gzip_static_module \
+      --with-http_mp4_module \
+      --with-http_random_index_module \
+      --with-http_realip_module \
+      --with-http_secure_link_module \
+      --with-http_slice_module \
+      --with-http_ssl_module \
+      --with-http_stub_status_module \
+      --with-http_sub_module \
+      --with-http_v2_module \
+      --with-http_v3_module \
+      --with-pcre-jit \
+      --with-stream \
+      --with-stream_ssl_module \
+      --with-stream_ssl_preread_module \
+      --with-threads \
+      --with-openssl=/build/openssl-ech \
+      --with-ld-opt="-Wl,--export-dynamic -u SSL_CTX_set1_echstore" \
       --add-dynamic-module=/build/ModSecurity-nginx \
       --add-dynamic-module=/build/ngx_brotli \
       --add-dynamic-module=/build/zstd-nginx-module && \
     make -j2 && \
     NGINX_VERSION=$(echo "${OPENRESTY_VERSION}" | cut -d. -f1-3) && \
     mkdir -p /build/custom-modules && \
-    cp build/nginx-${NGINX_VERSION}/objs/ngx_http_*.so /build/custom-modules/
+    cp build/nginx-${NGINX_VERSION}/objs/ngx_http_*.so /build/custom-modules/ && \
+    cp build/nginx-${NGINX_VERSION}/objs/nginx /build/nginx-ech
 
 FROM openresty/openresty:${OPENRESTY_VERSION}-alpine
 
@@ -57,6 +93,10 @@ COPY --from=modsec-builder \
     /usr/local/modsecurity /usr/local/modsecurity
 COPY --from=modsec-builder \
     /build/custom-modules/ /usr/local/openresty/nginx/modules/
+COPY --from=modsec-builder \
+    /usr/local/bin/openssl-ech /usr/local/bin/openssl-ech
+COPY --from=modsec-builder \
+    /build/nginx-ech /usr/local/openresty/nginx/sbin/nginx
 
 RUN mkdir -p /etc/modsecurity && \
     wget -O /tmp/crs.tar.gz \
@@ -79,3 +119,8 @@ RUN sed -i \
     /etc/modsecurity/modsecurity.conf
 
 COPY conf/modsecurity-includes.conf /etc/modsecurity/includes.conf
+
+COPY scripts/gen-ech-keys.sh /usr/local/bin/gen-ech-keys
+RUN chmod +x /usr/local/bin/gen-ech-keys
+
+RUN mkdir -p /etc/nginx/ech

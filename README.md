@@ -10,6 +10,7 @@ nginx container image with some sugars for my homelab server
 | ModSecurity | v3.0.14 |
 | ModSecurity-nginx connector | v1.0.4 |
 | OWASP Core Rule Set | v4.24.0 |
+| ECH OpenSSL (defo-project) | 3.9.0-ech |
 
 ## Nginx modules
 
@@ -74,6 +75,49 @@ nginx container image with some sugars for my homelab server
 | `encrypted-session-nginx-module` | Encrypt/decrypt nginx variables |
 | `xss-nginx-module` | Native JSONP/cross-site support |
 | `ngx_coolkit` | Small utility directives |
+
+## ECH (Encrypted Client Hello)
+
+ECH encrypts the TLS ClientHello so the SNI (server name) of the real backend is not visible to on-path observers.  Only the outer `public_name` (e.g. a CDN hostname) is transmitted in plaintext.
+
+### Key generation
+
+```sh
+docker run --rm -v /etc/nginx/ech:/etc/nginx/ech <image> gen-ech-keys <public_name>
+```
+
+This writes `/etc/nginx/ech/server.ech.pem` containing the ECHConfig and private key.
+
+### DNS record
+
+Publish the ECHConfigList as the `ech=` parameter of your DNS HTTPS resource record (type 65):
+
+```
+example.com.  HTTPS  1  .  ech=<base64>
+```
+
+Get the base64 value from:
+
+```sh
+docker run --rm -v /etc/nginx/ech:/etc/nginx/ech <image> \
+    openssl-ech ech -in /etc/nginx/ech/server.ech.pem -text
+```
+
+### Applying keys
+
+Mount the key directory into the container and reload nginx:
+
+```sh
+docker run -v /etc/nginx/ech:/etc/nginx/ech:ro ... <image>
+# or after rotation:
+docker exec <container> nginx -s reload
+```
+
+Keys are loaded into the TLS context on the first HTTPS connection per worker.  If the key file is absent, HTTPS continues to work normally without ECH.
+
+### Key rotation
+
+Rotate keys periodically (weekly is typical).  Generate a new key, update the DNS record, then reload nginx.  Remove the old key once the DNS TTL has expired.
 
 ## Version updates
 
