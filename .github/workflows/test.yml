@@ -12,7 +12,25 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
+        id: buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Restore cache mounts
+        id: cache-mounts
+        uses: actions/cache@v4
+        with:
+          path: .buildkit-cache/linux-amd64
+          key: buildkit-cache-mount-linux-amd64-${{ hashFiles('Dockerfile') }}
+          restore-keys: |
+            buildkit-cache-mount-linux-amd64-
+
+      - name: Inject cache mounts into BuildKit
+        uses: reproducible-containers/buildkit-cache-dance@v3
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          cache-dir: .buildkit-cache/linux-amd64
+          dockerfile: Dockerfile
+          skip-extraction: ${{ steps.cache-mounts.outputs.cache-hit }}
 
       - name: Build image
         uses: docker/build-push-action@v6
@@ -20,8 +38,8 @@ jobs:
           context: .
           load: true
           tags: sweetnginx:test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=build-linux-amd64
+          cache-to: type=gha,mode=max,scope=build-linux-amd64
 
       - name: Check curl HTTP/3 support
         run: curl --version | grep -q ngtcp2 || (echo "curl lacks HTTP/3 support" && exit 1)
