@@ -36,8 +36,20 @@ ARG OPENSSL_ECH_TAG=3.9.0-ech
 
 RUN --mount=type=cache,target=/var/cache/distfiles,sharing=locked \
     mkdir -p /src/openssl-ech && \
-    wget -nv -O /var/cache/distfiles/openssl-${OPENSSL_ECH_TAG}.tar.gz \
-    https://github.com/defo-project/openssl/archive/refs/tags/${OPENSSL_ECH_TAG}.tar.gz && \
+    archive="/var/cache/distfiles/openssl-${OPENSSL_ECH_TAG}.tar.gz" && \
+    tmp_archive="${archive}.tmp" && \
+    rm -f "$tmp_archive" && \
+    if [ ! -s "$archive" ]; then \
+      if wget -nv -O "$tmp_archive" \
+          "https://github.com/defo-project/openssl/archive/refs/tags/${OPENSSL_ECH_TAG}.tar.gz"; then \
+        mv "$tmp_archive" "$archive"; \
+      else \
+        rm -f "$tmp_archive" && \
+        wget -nv -O "$tmp_archive" \
+          "https://github.com/defo-project/openssl/archive/refs/heads/${OPENSSL_ECH_TAG}.tar.gz" && \
+        mv "$tmp_archive" "$archive"; \
+      fi; \
+    fi && \
     tar xzf /var/cache/distfiles/openssl-${OPENSSL_ECH_TAG}.tar.gz \
       --strip-components=1 -C /src/openssl-ech
 
