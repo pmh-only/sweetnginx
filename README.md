@@ -6,8 +6,7 @@ nginx container image with some sugars for my homelab server
 
 | Component | Version |
 |-----------|---------|
-| nginx | 1.29.4 |
-| headers-more-nginx-module | v0.38 |
+| OpenResty | 1.27.1.2 |
 | ModSecurity | v3.0.14 |
 | ModSecurity-nginx connector | v1.0.4 |
 | OWASP Core Rule Set | v4.24.0 |
@@ -42,17 +41,40 @@ nginx container image with some sugars for my homelab server
 | `mail_ssl_module` | TLS for mail proxy |
 | `threads` | Thread pool support |
 | `pcre-jit` | JIT-compiled regex |
-| `headers-more-nginx-module` | Arbitrary add/set/clear of request and response headers |
 
 ### Dynamic
 
 | Module | Description |
 |--------|-------------|
+| `http_geoip_module` | GeoIP-based routing (MaxMind legacy) |
+| `http_image_filter_module` | On-the-fly image resizing/cropping |
+| `http_xslt_module` | XSLT response transformation |
 | `ngx_http_modsecurity_module` | ModSecurity WAF ← added by this image |
 | `ngx_http_brotli_filter_module` | Dynamic Brotli compression ← added by this image |
 | `ngx_http_brotli_static_module` | Serve pre-compressed `.br` files ← added by this image |
 | `ngx_http_zstd_filter_module` | Dynamic Zstd compression ← added by this image |
 | `ngx_http_zstd_static_module` | Serve pre-compressed `.zst` files ← added by this image |
+
+### OpenResty additions (static)
+
+| Module | Description |
+|--------|-------------|
+| `ngx_devel_kit` | Module development kit (NDK) |
+| `echo-nginx-module` | `echo`, `echo_exec`, etc. for config scripting |
+| `set-misc-nginx-module` | Extra `set_*` directives (MD5, SHA1, base64, escaping…) |
+| `headers-more-nginx-module` | Arbitrary add/set/clear of request and response headers |
+| `ngx_lua` | Lua scripting via LuaJIT |
+| `ngx_lua_upstream` | Upstream manipulation from Lua |
+| `ngx_stream_lua` | Lua scripting in stream (TCP/UDP) context |
+| `srcache-nginx-module` | Transparent subrequest-based caching |
+| `memc-nginx-module` | Memcached upstream with extended commands |
+| `redis2-nginx-module` | Redis 2.x upstream |
+| `redis-nginx-module` | Redis upstream |
+| `form-input-nginx-module` | Parse `application/x-www-form-urlencoded` POST bodies |
+| `array-var-nginx-module` | Array variables in nginx config |
+| `encrypted-session-nginx-module` | Encrypt/decrypt nginx variables |
+| `xss-nginx-module` | Native JSONP/cross-site support |
+| `ngx_coolkit` | Small utility directives |
 
 ## ECH (Encrypted Client Hello)
 
@@ -83,23 +105,15 @@ docker run --rm -v /etc/nginx/ech:/etc/nginx/ech <image> \
 
 ### Applying keys
 
-Add `ssl_ech_file` to your HTTPS server block, mount the key directory, and start nginx:
-
-```nginx
-server {
-    listen 443 ssl;
-    ssl_ech_file /etc/nginx/ech/server.ech.pem;
-    ...
-}
-```
+Mount the key directory into the container and reload nginx:
 
 ```sh
 docker run -v /etc/nginx/ech:/etc/nginx/ech:ro ... <image>
 # or after rotation:
-docker exec <container> /usr/local/openresty/nginx/sbin/nginx -s reload
+docker exec <container> nginx -s reload
 ```
 
-Keys are loaded at startup.  If the key file is absent, HTTPS continues to work normally without ECH.
+Keys are loaded into the TLS context on the first HTTPS connection per worker.  If the key file is absent, HTTPS continues to work normally without ECH.
 
 ### Key rotation
 
