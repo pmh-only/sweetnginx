@@ -230,7 +230,8 @@ FROM alpine:3.21
 
 RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
     apk add --update-cache \
-    libxml2 libcurl yajl geoip lmdb libmaxminddb pcre2 brotli zstd-libs
+    libxml2 libcurl yajl geoip lmdb libmaxminddb pcre2 brotli zstd-libs \
+    libstdc++
 
 COPY --from=modsecurity-builder \
     /usr/local/modsecurity /usr/local/modsecurity
