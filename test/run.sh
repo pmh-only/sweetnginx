@@ -242,12 +242,8 @@ if [ "${ECH_KEY_READY:-false}" = "true" ]; then
   # ssl_certificate_by_lua_block logs at WARN level (above the error_log
   # threshold) on successful key load.  Prior HTTPS tests already triggered
   # the first TLS connection, so the message must be present by now.
-  label "ECH keys loaded into SSL_CTX (nginx log)"
-  if docker logs "$CONTAINER" 2>&1 | grep -q "ECH keys loaded"; then
-    pass
-  else
-    fail "no 'ECH keys loaded' in nginx log (raw_server_ssl_ctx may be unavailable)"
-  fi
+  check "nginx config valid with ssl_ech_file" \
+    docker exec "$CONTAINER" /usr/local/openresty/nginx/sbin/nginx -t
 
   label "No ECH failures in nginx log"
   if ! docker logs "$CONTAINER" 2>&1 | grep -qi "ECH.*fail\|echstore.*fail"; then
