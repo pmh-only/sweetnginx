@@ -1,0 +1,15 @@
+--- a/ssl/ech/ech_internal.c
++++ b/ssl/ech/ech_internal.c
+@@ -2108,7 +2108,12 @@
+     if (outerpkt == NULL || newpkt == NULL) {
+         SSLfatal(s, SSL_AD_DECODE_ERROR, SSL_R_BAD_EXTENSION);
+         return 0;
+     }
++    /* ECH early decrypt is not applicable to QUIC connections.
++     * ossl_ech_get_ch_offsets() cannot parse QUIC CRYPTO frames and calls
++     * SSLfatal(SSL_AD_DECODE_ERROR), which becomes a QUIC CONNECTION_CLOSE. */
++    if (SSL_IS_QUIC_HANDSHAKE(s))
++        return 1;
+     /* find offsets - on success, outputs are safe to use */
+     rv = ossl_ech_get_ch_offsets(s, outerpkt, &startofsessid, &startofexts,
+                                  &echoffset, &echtype, &innerflag,

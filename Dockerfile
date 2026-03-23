@@ -151,11 +151,13 @@ FROM build-base AS openssl-builder
 ARG MAKE_JOBS
 
 COPY --from=openssl-src /src/openssl-ech /build/openssl-ech
+COPY patches/openssl-ech-quic-fix.patch /build/openssl-ech-quic-fix.patch
 
 RUN --mount=type=cache,target=/root/.cache/ccache,sharing=locked \
     jobs="${MAKE_JOBS}" && \
     if [ "$jobs" = "0" ]; then jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"; fi && \
     cd /build/openssl-ech && \
+    patch -p1 < /build/openssl-ech-quic-fix.patch && \
     perl Configure no-tests no-shared && \
     make -j"$jobs" && \
     cp apps/openssl /usr/local/bin/openssl-ech
@@ -184,6 +186,9 @@ COPY --from=modsec-nginx-src /src/ModSecurity-nginx /build/ModSecurity-nginx
 COPY --from=brotli-src /src/ngx_brotli /build/ngx_brotli
 COPY --from=zstd-src /src/zstd-nginx-module /build/zstd-nginx-module
 COPY --from=modsecurity-builder /usr/local/modsecurity /usr/local/modsecurity
+COPY patches/openssl-ech-quic-fix.patch /build/openssl-ech-quic-fix.patch
+
+RUN patch -p1 -d /build/openssl-ech < /build/openssl-ech-quic-fix.patch
 
 RUN --mount=type=cache,target=/root/.cache/ccache,sharing=locked \
     cd /build/nginx && \
