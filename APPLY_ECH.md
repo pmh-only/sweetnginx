@@ -51,10 +51,10 @@ The ECH store is loaded into the TLS and QUIC SSL_CTXs on the first connection h
 
 ## 3. Publish the DNS HTTPS record
 
-Add a DNS `HTTPS` resource record for your domain containing the ECHConfigList from step 1:
+Add a DNS `HTTPS` resource record for your domain containing the ECHConfigList from step 1.  **Always include `alpn="h3 h2"`** — without it browsers will not attempt HTTP/3 even if `Alt-Svc` is present, because a HTTPS RR takes precedence over cached Alt-Svc entries:
 
 ```
-example.com.  IN  HTTPS  1  .  ech=<base64>
+example.com.  IN  HTTPS  1  .  alpn="h3 h2"  ech=<base64>
 ```
 
 If you need to re-extract the base64 from an existing key file:
@@ -222,5 +222,6 @@ Use a distinct `package.loaded` key per server block for the `_ctx_ech_done` gua
 | No `ECH: keys loaded` in logs | Key file missing or unreadable | Check the volume mount and file permissions |
 | `ERR_ECH_FALLBACK_CERTIFICATE_INVALID` | ECH store not set on SSL_CTX | Ensure `ssl_certificate_by_lua_block` is present and the key file is mounted |
 | Browser shows plaintext SNI | DNS `HTTPS` record missing or not propagated | Verify record with `dig HTTPS example.com` |
+| Browser uses HTTP/2 instead of HTTP/3 after ECH enabled | DNS `HTTPS` record missing `alpn="h3 h2"` — browsers use the HTTPS RR exclusively and ignore Alt-Svc | Add `alpn="h3 h2"` to the HTTPS record alongside `ech=` |
 | HTTP/3 connections fail after ECH store is set | Unpatched OpenSSL — `ossl_ech_early_decrypt` crashes on QUIC packet format | Ensure the image was built with `patches/openssl-ech-quic-fix.patch` applied |
 | `QUIC connection has been shut down` with curl `--ech grease` | curl OSSL-QUIC rejects retry_configs in EncryptedExtensions | Expected curl limitation; real browsers handle this correctly |
