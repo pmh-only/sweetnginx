@@ -172,7 +172,6 @@ COPY --from=modsec-nginx-src /src/ModSecurity-nginx /build/ModSecurity-nginx
 COPY --from=brotli-src /src/ngx_brotli /build/ngx_brotli
 COPY --from=zstd-src /src/zstd-nginx-module /build/zstd-nginx-module
 COPY --from=modsecurity-builder /usr/local/modsecurity /usr/local/modsecurity
-
 RUN --mount=type=cache,target=/root/.cache/ccache,sharing=locked \
     cd /build/openresty && \
     jobs="${MAKE_JOBS}" && \

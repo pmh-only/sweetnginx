@@ -80,44 +80,11 @@ nginx container image with some sugars for my homelab server
 
 ECH encrypts the TLS ClientHello so the SNI (server name) of the real backend is not visible to on-path observers.  Only the outer `public_name` (e.g. a CDN hostname) is transmitted in plaintext.
 
-### Key generation
+See [APPLY_ECH.md](APPLY_ECH.md) for key generation, DNS publishing, verification, and key rotation.
 
-```sh
-docker run --rm -v /etc/nginx/ech:/etc/nginx/ech <image> gen-ech-keys <public_name>
-```
+### Implementation notes
 
-This writes `/etc/nginx/ech/server.ech.pem` containing the ECHConfig and private key.
-
-### DNS record
-
-Publish the ECHConfigList as the `ech=` parameter of your DNS HTTPS resource record (type 65):
-
-```
-example.com.  HTTPS  1  .  ech=<base64>
-```
-
-Get the base64 value from:
-
-```sh
-docker run --rm -v /etc/nginx/ech:/etc/nginx/ech <image> \
-    openssl-ech ech -in /etc/nginx/ech/server.ech.pem -text
-```
-
-### Applying keys
-
-Mount the key directory into the container and reload nginx:
-
-```sh
-docker run -v /etc/nginx/ech:/etc/nginx/ech:ro ... <image>
-# or after rotation:
-docker exec <container> nginx -s reload
-```
-
-Keys are loaded into the TLS context on the first HTTPS connection per worker.  If the key file is absent, HTTPS continues to work normally without ECH.
-
-### Key rotation
-
-Rotate keys periodically (weekly is typical).  Generate a new key, update the DNS record, then reload nginx.  Remove the old key once the DNS TTL has expired.
+No server-side ECH configuration is required.  Since the image serves a single certificate, there is no inner-SNI routing; clients can publish an ECHConfigList in DNS for GREASE privacy coverage, but the server needs no corresponding setup.  Without an ECH store, `tls_parse_ctos_ech` returns early when `es == NULL`, so any ECH extension — GREASE or real — is silently accepted and the connection completes normally on both TLS and HTTP/3.
 
 ## Version updates
 
