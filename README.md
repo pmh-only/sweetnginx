@@ -84,7 +84,7 @@ See [APPLY_ECH.md](APPLY_ECH.md) for key generation, DNS publishing, verificatio
 
 ### Implementation notes
 
-No server-side ECH configuration is required.  Since the image serves a single certificate, there is no inner-SNI routing; clients can publish an ECHConfigList in DNS for GREASE privacy coverage, but the server needs no corresponding setup.  Without an ECH store, `tls_parse_ctos_ech` returns early when `es == NULL`, so any ECH extension — GREASE or real — is silently accepted and the connection completes normally on both TLS and HTTP/3.
+ECH is applied to the TLS (`listen 443 ssl`) SSL_CTX via `SSL_CTX_set1_echstore`, called once per worker from `ssl_certificate_by_lua_block` using defo-project OpenSSL's FFI API.  The server decrypts the inner ClientHello and sends `ech_ok`, satisfying browsers that enforce ECH confirmation.  Inner-SNI routing is not performed — the server has one certificate and serves it unconditionally.  The QUIC (`listen 443 quic`) server uses a separate server block with its own SSL_CTX and no ECH store; setting the ECH store on a QUIC SSL_CTX causes ngtcp2 clients to abort with `bad_extension` due to unexpected ECH retry_configs in server extensions.  ECH GREASE works on HTTP/3 regardless.
 
 ## Version updates
 

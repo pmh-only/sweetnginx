@@ -4,6 +4,7 @@ set -uo pipefail
 IMAGE="${1:-sweetnginx:test}"
 CONTAINER="sweetnginx-test-$$"
 CERT_DIR=$(mktemp -d)
+ECH_DIR=$(mktemp -d)
 PASS=0
 FAIL=0
 
@@ -14,7 +15,7 @@ HTTPS_PORT=18443
 
 cleanup() {
   docker rm -f "$CONTAINER" 2>/dev/null || true
-  rm -rf "$CERT_DIR"
+  rm -rf "$CERT_DIR" "$ECH_DIR"
 }
 trap cleanup EXIT
 
@@ -51,6 +52,14 @@ if ! curl --version 2>&1 | grep -iE 'ngtcp2|OSSL-QUIC|quiche|HTTP3' > /dev/null;
   exit 1
 fi
 
+echo "Generating ECH key..."
+if docker run --rm -v "$ECH_DIR:/etc/nginx/ech" "$IMAGE" \
+    gen-ech-keys localhost >/dev/null 2>&1; then
+  ECH_KEY_READY=true
+else
+  ECH_KEY_READY=false
+fi
+
 echo "Generating TLS certificate..."
 openssl req -x509 -newkey rsa:2048 -nodes \
   -keyout "$CERT_DIR/tls.key" \
@@ -67,6 +76,7 @@ docker run -d --name "$CONTAINER" \
   -p "${HTTPS_PORT}:443/udp" \
   -v "$REPO/conf/nginx.test.conf:/usr/local/openresty/nginx/conf/nginx.conf:ro" \
   -v "$CERT_DIR:/etc/nginx/tls:ro" \
+  -v "$ECH_DIR:/etc/nginx/ech:ro" \
   "$IMAGE" >/dev/null
 
 printf "Waiting for nginx to become ready"
@@ -220,31 +230,62 @@ if [ "$s" = "403" ]; then pass; else fail "status: $s"; fi
 echo ""
 echo -e "${BOLD}ECH${NC}"
 
-label "ECH GREASE accepted"
-ech_err=$(curl_ech_ --ech grease --head "https://localhost:${HTTPS_PORT}/" 2>&1)
-ech_rc=$?
-if [ $ech_rc -eq 0 ]; then
-  pass
-elif echo "$ech_err" | grep -qi "unknown option\|option --ech"; then
-  printf "\033[0;33mSKIP\033[0m (curl lacks --ech)\n"
-else
-  fail "$ech_err"
-fi
+if [ "${ECH_KEY_READY:-false}" = "true" ]; then
+  label "ECH keys loaded (nginx log)"
+  if docker logs "$CONTAINER" 2>&1 | grep -q "ECH.*keys loaded"; then
+    pass
+  else
+    fail "no 'ECH: keys loaded' in nginx log"
+  fi
 
-label "ECH GREASE accepted over HTTP/3"
-ech_h3_ok=false
-for _retry in 1 2 3; do
-  ech_h3_err=$(curl_ech_ --ech grease --http3-only \
-    -f "https://localhost:${HTTPS_PORT}/" 2>&1)
-  if [ $? -eq 0 ]; then ech_h3_ok=true; break; fi
-  if echo "$ech_h3_err" | grep -qi "unknown option\|option --ech"; then break; fi
-done
-if $ech_h3_ok; then
-  pass
-elif echo "$ech_h3_err" | grep -qi "unknown option\|option --ech"; then
-  printf "\033[0;33mSKIP\033[0m (curl lacks --ech)\n"
+  label "ECH GREASE accepted"
+  ech_err=$(curl_ech_ --ech grease --head "https://localhost:${HTTPS_PORT}/" 2>&1)
+  ech_rc=$?
+  if [ $ech_rc -eq 0 ]; then
+    pass
+  elif echo "$ech_err" | grep -qi "unknown option\|option --ech"; then
+    printf "\033[0;33mSKIP\033[0m (curl lacks --ech)\n"
+  else
+    fail "$ech_err"
+  fi
+
+  label "Real ECH handshake"
+  ech_b64=$(docker exec "$CONTAINER" \
+    sed -n '/-----BEGIN ECHCONFIG-----/,/-----END ECHCONFIG-----/{/-----BEGIN/d;/-----END/d;p}' \
+    /etc/nginx/ech/server.ech.pem 2>/dev/null | tr -d '\n\r ')
+  if [ -z "$ech_b64" ]; then
+    printf "\033[0;33mSKIP\033[0m (could not extract ECHConfigList)\n"
+  else
+    ech_real_err=$(curl_ech_ --ech "ecl:${ech_b64}" -sf \
+      "https://localhost:${HTTPS_PORT}/" 2>&1)
+    ech_real_rc=$?
+    if [ $ech_real_rc -eq 0 ]; then
+      pass
+    elif echo "$ech_real_err" | grep -qi "unknown option\|option --ech"; then
+      printf "\033[0;33mSKIP\033[0m (curl lacks --ech ecl)\n"
+    else
+      fail "$ech_real_err"
+    fi
+  fi
+
+  label "ECH GREASE accepted over HTTP/3"
+  ech_h3_ok=false
+  for _retry in 1 2 3; do
+    ech_h3_err=$(curl_ech_ --ech grease --http3-only \
+      -f "https://localhost:${HTTPS_PORT}/" 2>&1)
+    if [ $? -eq 0 ]; then ech_h3_ok=true; break; fi
+    if echo "$ech_h3_err" | grep -qi "unknown option\|option --ech"; then break; fi
+  done
+  if $ech_h3_ok; then
+    pass
+  elif echo "$ech_h3_err" | grep -qi "unknown option\|option --ech"; then
+    printf "\033[0;33mSKIP\033[0m (curl lacks --ech)\n"
+  else
+    fail "$ech_h3_err"
+  fi
 else
-  fail "$ech_h3_err"
+  label "ECH tests (key generation failed)"
+  printf "\033[0;33mSKIP\033[0m\n"
 fi
 
 echo ""
