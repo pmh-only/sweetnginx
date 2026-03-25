@@ -84,7 +84,7 @@ See [APPLY_ECH.md](APPLY_ECH.md) for key generation, DNS publishing, verificatio
 
 ### Implementation notes
 
-ECH is applied to both the TLS (`listen 443 ssl`) and QUIC (`listen 443 quic`) SSL_CTXs via `SSL_CTX_set1_echstore`, called once per worker from `ssl_certificate_by_lua_block` using defo-project OpenSSL's FFI API.  The server decrypts the inner ClientHello and sends `ech_ok`, satisfying browsers that enforce ECH confirmation.  Inner-SNI routing is not performed — the server has one certificate and serves it unconditionally.  A local patch to defo-project OpenSSL (`patches/openssl-ech-quic-fix.patch`) guards the QUIC code path in `ossl_ech_early_decrypt` against packet-format differences, enabling the ECH store to be set on the QUIC SSL_CTX without crashing subsequent connections.
+ECH is applied to both the TLS (`listen 443 ssl`) and QUIC (`listen 443 quic`) SSL_CTXs via `SSL_CTX_set1_echstore`, called at configuration time from the native `ssl_ech_key` directive added to `ngx_http_ssl_module` via `patches/nginx-ssl-ech-key.patch`.  The server decrypts the inner ClientHello and sends `ech_ok`, satisfying browsers that enforce ECH confirmation.  Inner-SNI routing is not performed — the server has one certificate and serves it unconditionally.  A second patch to defo-project OpenSSL (`patches/openssl-ech-quic-fix.patch`) guards the QUIC code path in `ossl_ech_early_decrypt` against packet-format differences, preventing crashes on QUIC connections when the ECH store is active.
 
 ## Version updates
 

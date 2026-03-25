@@ -30,6 +30,9 @@ RUN --mount=type=cache,target=/var/cache/distfiles,sharing=locked \
     tar xzf /var/cache/distfiles/openresty-${OPENRESTY_VERSION}.tar.gz \
       --strip-components=1 -C /src/openresty
 
+COPY patches/ /patches/
+RUN patch -p1 -d /src/openresty < /patches/nginx-ssl-ech-key.patch
+
 FROM build-base AS openssl-src
 
 ARG OPENSSL_ECH_TAG=3.9.0-ech

@@ -1,0 +1,98 @@
+--- a/bundle/nginx-1.27.1/src/http/modules/ngx_http_ssl_module.h
++++ b/bundle/nginx-1.27.1/src/http/modules/ngx_http_ssl_module.h
+@@ -60,6 +60,8 @@
+     ngx_flag_t                      stapling_verify;
+     ngx_str_t                       stapling_file;
+     ngx_str_t                       stapling_responder;
++
++    ngx_str_t                       ech_key_file;
+ } ngx_http_ssl_srv_conf_t;
+
+
+--- a/bundle/nginx-1.27.1/src/http/modules/ngx_http_ssl_module.c
++++ b/bundle/nginx-1.27.1/src/http/modules/ngx_http_ssl_module.c
+@@ -7,6 +7,7 @@
+ #include <ngx_config.h>
+ #include <ngx_core.h>
+ #include <ngx_http.h>
++#include <openssl/ech.h>
+
+ #if (NGX_QUIC_OPENSSL_COMPAT)
+ #include <ngx_event_quic_openssl_compat.h>
+@@ -281,6 +282,13 @@
+     { ngx_string("ssl_reject_handshake"),
+       NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_CONF_FLAG,
+       ngx_conf_set_flag_slot,
+       NGX_HTTP_SRV_CONF_OFFSET,
+       offsetof(ngx_http_ssl_srv_conf_t, reject_handshake),
+       NULL },
+
++    { ngx_string("ssl_ech_key"),
++      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_CONF_TAKE1,
++      ngx_conf_set_str_slot,
++      NGX_HTTP_SRV_CONF_OFFSET,
++      offsetof(ngx_http_ssl_srv_conf_t, ech_key_file),
++      NULL },
++
+       ngx_null_command
+ };
+@@ -531,6 +539,8 @@
+     ngx_conf_merge_value(conf->stapling, prev->stapling, 0);
+     ngx_conf_merge_value(conf->stapling_verify, prev->stapling_verify, 0);
+     ngx_conf_merge_str_value(conf->stapling_file, prev->stapling_file, "");
+     ngx_conf_merge_str_value(conf->stapling_responder,
+                          prev->stapling_responder, "");
++
++    ngx_conf_merge_str_value(conf->ech_key_file, prev->ech_key_file, "");
+
+     conf->ssl.log = cf->log;
+@@ -836,6 +846,50 @@
+     if (ngx_ssl_conf_commands(cf, &conf->ssl, conf->conf_commands) != NGX_OK) {
+         return NGX_CONF_ERROR;
+     }
+
++    if (conf->ech_key_file.len) {
++        BIO           *bio;
++        OSSL_ECHSTORE *es;
++
++        bio = BIO_new_file((char *) conf->ech_key_file.data, "r");
++        if (bio == NULL) {
++            ngx_log_error(NGX_LOG_EMERG, cf->log, 0,
++                          "BIO_new_file(\"%V\") failed", &conf->ech_key_file);
++            return NGX_CONF_ERROR;
++        }
++
++        es = OSSL_ECHSTORE_new(NULL, NULL);
++        if (es == NULL) {
++            BIO_free_all(bio);
++            ngx_log_error(NGX_LOG_EMERG, cf->log, 0,
++                          "OSSL_ECHSTORE_new() failed");
++            return NGX_CONF_ERROR;
++        }
++
++        if (OSSL_ECHSTORE_read_pem(es, bio, 1) != 1) {
++            OSSL_ECHSTORE_free(es);
++            BIO_free_all(bio);
++            ngx_log_error(NGX_LOG_EMERG, cf->log, 0,
++                          "OSSL_ECHSTORE_read_pem(\"%V\") failed",
++                          &conf->ech_key_file);
++            return NGX_CONF_ERROR;
++        }
++
++        BIO_free_all(bio);
++
++        if (SSL_CTX_set1_echstore(conf->ssl.ctx, es) != 1) {
++            OSSL_ECHSTORE_free(es);
++            ngx_log_error(NGX_LOG_EMERG, cf->log, 0,
++                          "SSL_CTX_set1_echstore() failed");
++            return NGX_CONF_ERROR;
++        }
++
++        OSSL_ECHSTORE_free(es);
++
++        ngx_log_error(NGX_LOG_NOTICE, cf->log, 0,
++                      "ECH: keys loaded from \"%V\"", &conf->ech_key_file);
++    }
++
+     return NGX_CONF_OK;
+ }
