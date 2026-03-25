@@ -106,7 +106,7 @@ Open `https://example.com/` in Chrome or Firefox.  Navigate to `chrome://net-int
 
 ## 5. nginx.conf integration
 
-Add the following to every `server` block that listens on `443 ssl` or `443 quic`.  The `init_by_lua_block` belongs at the top of the `http` block.
+The TLS (`listen 443 ssl`) and QUIC (`listen 443 quic`) blocks must be **separate server blocks**.  The `init_by_lua_block` belongs at the top of the `http` block.
 
 **In `http { ... }`:**
 
@@ -196,7 +196,73 @@ ssl_certificate_by_lua_block {
 }
 ```
 
-Use a distinct `package.loaded` key per server block for the `_ctx_ech_done` guard (e.g. `_ctx_ech_done_quic` for the QUIC block) so each SSL_CTX gets the store set independently.
+**In each `server { listen 443 quic reuseport; ... }`:**
+
+The QUIC block only sets the ECH store — it does **not** inject the certificate.  Lua's `ssl.clear_certs()` + `ssl.set_der_cert()` is incompatible with QUIC's TLS layer (ECH in defo-project OpenSSL forces a 32-byte legacy_session_id that QUIC forbids, causing `SSL_R_INVALID_SESSION_ID`).  The http-level static `ssl_certificate` / `ssl_certificate_key` directives handle the cert for QUIC connections transparently.
+
+```nginx
+ssl_certificate_by_lua_block {
+    local ssl = require "ngx.ssl"
+    local ffi = require "ffi"
+
+    if not package.loaded["_ffi_done"] then
+        package.loaded["_ffi_done"] = true
+        pcall(ffi.cdef, [[
+            typedef struct ssl_st            SSL;
+            typedef struct ssl_ctx_st        SSL_CTX;
+            typedef struct ossl_echstore_st  OSSL_ECHSTORE;
+            typedef struct ossl_lib_ctx_st   OSSL_LIB_CTX;
+            typedef struct bio_st            BIO;
+            OSSL_ECHSTORE *OSSL_ECHSTORE_new(OSSL_LIB_CTX *, const char *);
+            void           OSSL_ECHSTORE_free(OSSL_ECHSTORE *);
+            BIO           *BIO_new_mem_buf(const void *buf, int len);
+            void           BIO_free_all(BIO *);
+            int            OSSL_ECHSTORE_read_pem(OSSL_ECHSTORE *, BIO *, int);
+            SSL_CTX       *SSL_get_SSL_CTX(const SSL *);
+            int            SSL_CTX_set1_echstore(SSL_CTX *, OSSL_ECHSTORE *);
+        ]])
+    end
+
+    if not package.loaded["_ech_init"] then
+        package.loaded["_ech_init"] = true
+        local ech_pem = package.loaded["_ech_pem"]
+        if ech_pem then
+            pcall(function()
+                local bio = ffi.C.BIO_new_mem_buf(ech_pem, #ech_pem)
+                if bio ~= ffi.null then
+                    local es = ffi.C.OSSL_ECHSTORE_new(nil, nil)
+                    if es ~= ffi.null then
+                        if ffi.C.OSSL_ECHSTORE_read_pem(es, bio, 1) == 1 then
+                            package.loaded["_ech_store"] = es
+                            ngx.log(ngx.WARN, "ECH: keys loaded")
+                        else
+                            ffi.C.OSSL_ECHSTORE_free(es)
+                        end
+                    end
+                    ffi.C.BIO_free_all(bio)
+                end
+            end)
+        end
+        local cert_pem = package.loaded["_cert_pem"]
+        local key_pem  = package.loaded["_key_pem"]
+        if cert_pem then package.loaded["_cert_der"] = ssl.cert_pem_to_der(cert_pem) end
+        if key_pem  then package.loaded["_key_der"]  = ssl.priv_key_pem_to_der(key_pem) end
+    end
+
+    if not package.loaded["_ctx_ech_done_quic"] then
+        package.loaded["_ctx_ech_done_quic"] = true
+        local es = package.loaded["_ech_store"]
+        local ssl_ptr = ssl.get_req_ssl_pointer and ssl.get_req_ssl_pointer()
+        if es and ssl_ptr then
+            pcall(function()
+                local ctx = ffi.C.SSL_get_SSL_CTX(ffi.cast("const struct ssl_st *", ssl_ptr))
+                if ctx ~= ffi.null then ffi.C.SSL_CTX_set1_echstore(ctx, es) end
+            end)
+        end
+    end
+    -- no cert injection: static ssl_certificate at http level is used for QUIC
+}
+```
 
 ---
 
@@ -224,4 +290,5 @@ Use a distinct `package.loaded` key per server block for the `_ctx_ech_done` gua
 | Browser shows plaintext SNI | DNS `HTTPS` record missing or not propagated | Verify record with `dig HTTPS example.com` |
 | Browser uses HTTP/2 instead of HTTP/3 after ECH enabled | DNS `HTTPS` record missing `alpn="h3 h2"` — browsers use the HTTPS RR exclusively and ignore Alt-Svc | Add `alpn="h3 h2"` to the HTTPS record alongside `ech=` |
 | HTTP/3 connections fail after ECH store is set | Unpatched OpenSSL — `ossl_ech_early_decrypt` crashes on QUIC packet format | Ensure the image was built with `patches/openssl-ech-quic-fix.patch` applied |
+| HTTP/3 fails with `SSL_R_INVALID_SESSION_ID` | QUIC `ssl_certificate_by_lua_block` injecting cert — defo-project ECH forces 32-byte legacy_session_id which QUIC forbids | Remove cert injection from QUIC block; use static `ssl_certificate` for QUIC |
 | `QUIC connection has been shut down` with curl `--ech grease` | curl OSSL-QUIC rejects retry_configs in EncryptedExtensions | Expected curl limitation; real browsers handle this correctly |
