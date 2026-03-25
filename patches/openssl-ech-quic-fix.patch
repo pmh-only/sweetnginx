@@ -1,0 +1,15 @@
+--- a/ssl/ech/ech_internal.c
++++ b/ssl/ech/ech_internal.c
+@@ -2368,6 +2368,8 @@
+     if (rv != 1) {
++        if (SSL_IS_QUIC_HANDSHAKE(s))
++            return 1;
+         SSLfatal(s, SSL_AD_DECODE_ERROR, SSL_R_BAD_EXTENSION);
+         return 0;
+     }
+@@ -2502,7 +2504,7 @@
+     /* we may need to fix up the overall 3-octet CH length */
+-    if (s->init_buf != NULL && s->init_buf->data != NULL) {
++    if (!SSL_IS_QUIC_HANDSHAKE(s) && s->init_buf != NULL && s->init_buf->data != NULL) {
+         unsigned char *rwm = (unsigned char *)s->init_buf->data;
+         size_t olen = s->ext.ech.innerch_len - 4;

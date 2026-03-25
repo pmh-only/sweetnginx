@@ -84,7 +84,7 @@ See [APPLY_ECH.md](APPLY_ECH.md) for key generation, DNS publishing, verificatio
 
 ### Implementation notes
 
-ECH is applied to the TLS (`listen 443 ssl`) SSL_CTX via `SSL_CTX_set1_echstore`, called once per worker from `ssl_certificate_by_lua_block` using defo-project OpenSSL's FFI API.  The server decrypts the inner ClientHello and sends `ech_ok`, satisfying browsers that enforce ECH confirmation.  Inner-SNI routing is not performed — the server has one certificate and serves it unconditionally.  The QUIC (`listen 443 quic`) server uses a separate server block with its own SSL_CTX and no ECH store; setting the ECH store on a QUIC SSL_CTX causes ngtcp2 clients to abort with `bad_extension` due to unexpected ECH retry_configs in server extensions.  ECH GREASE works on HTTP/3 regardless.
+ECH is applied to both the TLS (`listen 443 ssl`) and QUIC (`listen 443 quic`) SSL_CTXs via `SSL_CTX_set1_echstore`, called once per worker from `ssl_certificate_by_lua_block` using defo-project OpenSSL's FFI API.  The server decrypts the inner ClientHello and sends `ech_ok`, satisfying browsers that enforce ECH confirmation.  Inner-SNI routing is not performed — the server has one certificate and serves it unconditionally.  A local patch to defo-project OpenSSL (`patches/openssl-ech-quic-fix.patch`) guards the QUIC code path in `ossl_ech_early_decrypt` against packet-format differences, enabling the ECH store to be set on the QUIC SSL_CTX without crashing subsequent connections.
 
 ## Version updates
 

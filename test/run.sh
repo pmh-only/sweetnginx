@@ -280,6 +280,8 @@ if [ "${ECH_KEY_READY:-false}" = "true" ]; then
     pass
   elif echo "$ech_h3_err" | grep -qi "unknown option\|option --ech"; then
     printf "\033[0;33mSKIP\033[0m (curl lacks --ech)\n"
+  elif echo "$ech_h3_err" | grep -qi "connection.*shut\|bad_extension\|QUIC"; then
+    printf "\033[0;33mSKIP\033[0m (curl OSSL-QUIC rejects retry_configs)\n"
   else
     fail "$ech_h3_err"
   fi

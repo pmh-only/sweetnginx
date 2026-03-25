@@ -14,7 +14,7 @@ ENV CC="ccache gcc" \
 
 RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
     apk add --update-cache \
-    git build-base autoconf automake libtool ccache \
+    git build-base autoconf automake libtool ccache patch \
     pcre2-dev openssl-dev libxml2-dev curl-dev \
     yajl-dev geoip-dev lmdb-dev libmaxminddb-dev \
     linux-headers brotli-dev zstd-dev perl zlib-dev
@@ -52,6 +52,9 @@ RUN --mount=type=cache,target=/var/cache/distfiles,sharing=locked \
     fi && \
     tar xzf /var/cache/distfiles/openssl-${OPENSSL_ECH_TAG}.tar.gz \
       --strip-components=1 -C /src/openssl-ech
+
+COPY patches/ /patches/
+RUN patch -p1 -d /src/openssl-ech < /patches/openssl-ech-quic-fix.patch
 
 FROM build-base AS modsecurity-src
 

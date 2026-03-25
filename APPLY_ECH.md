@@ -2,7 +2,7 @@
 
 ECH (Encrypted Client Hello) encrypts the TLS ClientHello so the real SNI is not visible to on-path observers.  The server decrypts the inner ClientHello and confirms ECH to the client.  Inner-SNI routing is not performed — the server serves one certificate unconditionally.
 
-ECH applies to TLS connections only.  The QUIC server block uses a separate SSL_CTX with no ECH store; HTTP/3 clients continue to work normally regardless of whether they send an ECH extension.
+ECH applies to both TLS and QUIC (HTTP/3) connections.  Each server block has its own SSL_CTX; both receive the ECH store on the first connection per worker.
 
 ## 1. Generate ECH keys
 
@@ -20,7 +20,7 @@ Writes `/etc/nginx/ech/server.ech.pem`.
 docker run -v /etc/nginx/ech:/etc/nginx/ech:ro ... <image>
 ```
 
-Keys are loaded into the TLS SSL_CTX on the first HTTPS connection per worker.  If the key file is absent, HTTPS works normally without ECH.
+Keys are loaded into the TLS and QUIC SSL_CTXs on the first connection per worker.  If the key file is absent, HTTPS works normally without ECH.
 
 ## 3. Publish the DNS HTTPS record
 
