@@ -18,32 +18,19 @@
  #if (NGX_QUIC_OPENSSL_COMPAT)
  #include <ngx_event_quic_openssl_compat.h>
  #endif
-@@ -281,9 +282,16 @@
-     { ngx_string("ssl_reject_handshake"),
-       NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_CONF_FLAG,
-       ngx_conf_set_flag_slot,
-       NGX_HTTP_SRV_CONF_OFFSET,
-       offsetof(ngx_http_ssl_srv_conf_t, reject_handshake),
-       NULL },
- 
+@@ -289,2 +290,9 @@
 +    { ngx_string("ssl_ech_key"),
 +      NGX_HTTP_MAIN_CONF|NGX_HTTP_SRV_CONF|NGX_CONF_TAKE1,
 +      ngx_conf_set_str_slot,
 +      NGX_HTTP_SRV_CONF_OFFSET,
 +      offsetof(ngx_http_ssl_srv_conf_t, ech_key_file),
 +      NULL },
-+
++ 
        ngx_null_command
  };
-@@ -531,7 +539,9 @@
-     ngx_conf_merge_value(conf->stapling, prev->stapling, 0);
-     ngx_conf_merge_value(conf->stapling_verify, prev->stapling_verify, 0);
-     ngx_conf_merge_str_value(conf->stapling_file, prev->stapling_file, "");
-     ngx_conf_merge_str_value(conf->stapling_responder,
-                          prev->stapling_responder, "");
-+
+@@ -536,1 +543,3 @@
 +    ngx_conf_merge_str_value(conf->ech_key_file, prev->ech_key_file, "");
- 
++ 
      conf->ssl.log = cf->log;
 @@ -836,6 +846,49 @@
      if (ngx_ssl_conf_commands(cf, &conf->ssl, conf->conf_commands) != NGX_OK) {
@@ -92,6 +79,6 @@
 +        ngx_log_error(NGX_LOG_NOTICE, cf->log, 0,
 +                      "ECH: keys loaded from \"%V\"", &conf->ech_key_file);
 +    }
-+
++ 
      return NGX_CONF_OK;
  }
