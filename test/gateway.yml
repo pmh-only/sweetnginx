@@ -1,0 +1,442 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway-nginx-config
+  namespace: gateway
+data:
+  nginx.conf: |
+    load_module modules/ngx_http_modsecurity_module.so;
+    load_module modules/ngx_http_brotli_filter_module.so;
+    load_module modules/ngx_http_brotli_static_module.so;
+    load_module modules/ngx_http_zstd_filter_module.so;
+    load_module modules/ngx_http_zstd_static_module.so;
+
+    worker_processes auto;
+    events { worker_connections 1024; }
+
+    http {
+      init_by_lua_block {
+        local function slurp(p)
+          local f = io.open(p, "rb")
+          if not f then return nil end
+          local d = f:read("*a"); f:close(); return d
+        end
+        package.loaded["_cert_pem"] = slurp("/etc/nginx/tls/tls.crt")
+        package.loaded["_key_pem"]  = slurp("/etc/nginx/tls/tls.key")
+        package.loaded["_ech_pem"]  = slurp("/etc/nginx/ech/server.ech.pem")
+      }
+
+      include /usr/local/openresty/nginx/conf/mime.types;
+      default_type application/octet-stream;
+      sendfile on;
+      tcp_nopush on;
+      tcp_nodelay on;
+      keepalive_timeout 65;
+      types_hash_max_size 2048;
+
+      server_tokens off;
+      more_clear_headers Server;
+
+      access_log off;
+      error_log /dev/stderr warn;
+
+      client_max_body_size 0;
+
+      ssl_certificate     /etc/nginx/tls/tls.crt;
+      ssl_certificate_key /etc/nginx/tls/tls.key;
+
+      ssl_protocols TLSv1.2 TLSv1.3;
+      ssl_ciphers ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+      ssl_conf_command Ciphersuites TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256;
+      ssl_ecdh_curve secp384r1;
+
+      ssl_prefer_server_ciphers on;
+
+      ssl_session_timeout 1d;
+      ssl_session_cache shared:SSL:10m;
+
+      ssl_session_tickets off;
+      ssl_early_data on;
+
+      resolver kube-dns.kube-system.svc.cluster.local valid=30s;
+
+      http2 on;
+
+      http3 on;
+      http3_hq on;
+      quic_gso on;
+      quic_retry on;
+
+      gzip on;
+      gzip_comp_level 5;
+      gzip_min_length 1;
+      gzip_proxied any;
+      gzip_types
+        text/plain text/css text/xml application/xml
+        application/json application/javascript text/javascript
+        application/manifest+json application/rss+xml image/svg+xml;
+
+      brotli on;
+      brotli_comp_level 6;
+      brotli_min_length 1;
+      brotli_types
+        text/plain text/css text/xml application/xml
+        application/json application/javascript text/javascript
+        application/manifest+json application/rss+xml image/svg+xml;
+
+      zstd on;
+      zstd_comp_level 3;
+      zstd_min_length 1;
+      zstd_types
+        text/plain text/css text/xml application/xml
+        application/json application/javascript text/javascript
+        application/manifest+json application/rss+xml image/svg+xml;
+
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $remote_addr;
+      proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_set_header X-Forwarded-Host $host;
+      proxy_set_header X-Forwarded-Port $server_port;
+
+      map $http_upgrade $connection_upgrade {
+        default upgrade;
+        "" "";
+      }
+
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection $connection_upgrade;
+      proxy_set_header Accept-Encoding "";
+
+      proxy_read_timeout 86400;
+      proxy_send_timeout 86400;
+      proxy_request_buffering off;
+      proxy_http_version 1.1;
+
+      proxy_buffer_size 1m;
+      proxy_buffers 8 1m;
+      proxy_busy_buffers_size 2m;
+
+      map $http_x_forwarded_for $ga_xff {
+        default $http_x_forwarded_for;
+        ""      "-";
+      }
+
+      map $upstream_cache_status $ga_cache {
+        default $upstream_cache_status;
+        ""      "-";
+      }
+
+      map $ssl_protocol $ga_ssl_proto {
+        default $ssl_protocol;
+        ""      "-";
+      }
+
+      map $ssl_cipher $ga_ssl_cipher {
+        default $ssl_cipher;
+        ""      "-";
+      }
+
+      map $sent_http_content_type $ga_mime {
+        default $sent_http_content_type;
+        ""      "-";
+      }
+
+      log_format log_stream
+        '$remote_addr $ga_xff [$time_local] $host $remote_user $ga_cache '
+        '"$request" $status $body_bytes_sent '
+        '"$http_referer" "$http_user_agent" '
+        '$ga_ssl_proto $ga_ssl_cipher "$ga_mime" $request_time';
+
+      server {
+        listen  80 default_server;
+        listen  [::]:80 default_server;
+
+        access_log /dev/stdout log_stream;
+        error_log  /dev/stderr notice;
+
+        server_name _;
+
+        location / {
+          return 301 https://$host$request_uri;
+        }
+      }
+
+      server {
+        listen 443 ssl default_server;
+        listen [::]:443 ssl default_server;
+
+        server_name _;
+
+        ssl_certificate_by_lua_block {
+            local ssl = require "ngx.ssl"
+            local ffi = require "ffi"
+
+            if not package.loaded["_ffi_done"] then
+                package.loaded["_ffi_done"] = true
+                pcall(ffi.cdef, [[
+                    typedef struct ssl_st            SSL;
+                    typedef struct ssl_ctx_st        SSL_CTX;
+                    typedef struct ossl_echstore_st  OSSL_ECHSTORE;
+                    typedef struct ossl_lib_ctx_st   OSSL_LIB_CTX;
+                    typedef struct bio_st            BIO;
+                    OSSL_ECHSTORE *OSSL_ECHSTORE_new(OSSL_LIB_CTX *, const char *);
+                    void           OSSL_ECHSTORE_free(OSSL_ECHSTORE *);
+                    BIO           *BIO_new_mem_buf(const void *buf, int len);
+                    void           BIO_free_all(BIO *);
+                    int            OSSL_ECHSTORE_read_pem(OSSL_ECHSTORE *, BIO *, int);
+                    SSL_CTX       *SSL_get_SSL_CTX(const SSL *);
+                    int            SSL_CTX_set1_echstore(SSL_CTX *, OSSL_ECHSTORE *);
+                ]])
+            end
+
+            if not package.loaded["_ech_init"] then
+                package.loaded["_ech_init"] = true
+                local ech_pem = package.loaded["_ech_pem"]
+                if ech_pem then
+                    local ok, err = pcall(function()
+                        local bio = ffi.C.BIO_new_mem_buf(ech_pem, #ech_pem)
+                        if bio ~= ffi.null then
+                            local es = ffi.C.OSSL_ECHSTORE_new(nil, nil)
+                            if es ~= ffi.null then
+                                if ffi.C.OSSL_ECHSTORE_read_pem(es, bio, 1) == 1 then
+                                    package.loaded["_ech_store"] = es
+                                    ngx.log(ngx.WARN, "ECH: keys loaded")
+                                else
+                                    ffi.C.OSSL_ECHSTORE_free(es)
+                                end
+                            end
+                            ffi.C.BIO_free_all(bio)
+                        end
+                    end)
+                    if not ok then
+                        ngx.log(ngx.WARN, "ECH: init error: ", err)
+                    end
+                end
+                local cert_pem = package.loaded["_cert_pem"]
+                local key_pem  = package.loaded["_key_pem"]
+                if cert_pem then package.loaded["_cert_der"] = ssl.cert_pem_to_der(cert_pem) end
+                if key_pem  then package.loaded["_key_der"]  = ssl.priv_key_pem_to_der(key_pem) end
+            end
+
+            if not package.loaded["_ctx_ech_done"] then
+                package.loaded["_ctx_ech_done"] = true
+                local es = package.loaded["_ech_store"]
+                local ssl_ptr = ssl.get_req_ssl_pointer and ssl.get_req_ssl_pointer()
+                if es and ssl_ptr then
+                    pcall(function()
+                        local ctx = ffi.C.SSL_get_SSL_CTX(ffi.cast("const struct ssl_st *", ssl_ptr))
+                        if ctx ~= ffi.null then ffi.C.SSL_CTX_set1_echstore(ctx, es) end
+                    end)
+                end
+            end
+
+            local cert_der = package.loaded["_cert_der"]
+            local key_der  = package.loaded["_key_der"]
+            if not cert_der or not key_der then return ngx.exit(ngx.ERROR) end
+            local ok, err = ssl.clear_certs()
+            if not ok then return end
+            ssl.set_der_cert(cert_der)
+            ssl.set_der_priv_key(key_der)
+        }
+
+        add_header Alt-Svc 'h3=":443"; ma=86400' always;
+
+        access_log /dev/stdout log_stream;
+        error_log  /dev/stderr notice;
+
+        sub_filter_once on;
+        sub_filter_last_modified on;
+        sub_filter_types text/html;
+        sub_filter '<head>' '<head><script src="https://trace.pmh.codes/api/script.js" data-site-id="1" defer></script>';
+
+        modsecurity on;
+        modsecurity_rules_file /etc/modsecurity/includes.conf;
+        modsecurity_rules 'SecRuleRemoveById 920280';
+
+        error_page 403 @blocked;
+        location @blocked {
+          internal;
+          add_header Content-Type 'text/html;charset=utf-8' always;
+          return 403 'You look suspicious, Please review your request. <script src="https://pmh.codes/waf.js"></script>';
+        }
+
+        location = /robots.txt {
+          set $envoy_gateway envoy-gateway-main.envoy-gateway-system.svc.cluster.local;
+          proxy_pass http://$envoy_gateway:80/robots.txt;
+          proxy_set_header Host pmh.codes;
+        }
+
+        location = /sitemap.xml {
+          set $envoy_gateway envoy-gateway-main.envoy-gateway-system.svc.cluster.local;
+          proxy_pass http://$envoy_gateway:80/sitemap.xml;
+          proxy_set_header Host pmh.codes;
+        }
+
+        location / {
+          set $envoy_gateway envoy-gateway-main.envoy-gateway-system.svc.cluster.local;
+          proxy_pass http://$envoy_gateway:80;
+        }
+
+        location /_gwhealthz {
+          access_log off;
+
+          add_header Content-Type text/plain;
+          return 200 "Nginx is running";
+        }
+      }
+
+      server {
+        listen 443 quic reuseport;
+        listen [::]:443 quic reuseport;
+
+        server_name _;
+
+        ssl_certificate_by_lua_block {
+            local ssl = require "ngx.ssl"
+            local ffi = require "ffi"
+
+            if not package.loaded["_ffi_done"] then
+                package.loaded["_ffi_done"] = true
+                pcall(ffi.cdef, [[
+                    typedef struct ssl_st            SSL;
+                    typedef struct ssl_ctx_st        SSL_CTX;
+                    typedef struct ossl_echstore_st  OSSL_ECHSTORE;
+                    typedef struct ossl_lib_ctx_st   OSSL_LIB_CTX;
+                    typedef struct bio_st            BIO;
+                    OSSL_ECHSTORE *OSSL_ECHSTORE_new(OSSL_LIB_CTX *, const char *);
+                    void           OSSL_ECHSTORE_free(OSSL_ECHSTORE *);
+                    BIO           *BIO_new_mem_buf(const void *buf, int len);
+                    void           BIO_free_all(BIO *);
+                    int            OSSL_ECHSTORE_read_pem(OSSL_ECHSTORE *, BIO *, int);
+                    SSL_CTX       *SSL_get_SSL_CTX(const SSL *);
+                    int            SSL_CTX_set1_echstore(SSL_CTX *, OSSL_ECHSTORE *);
+                ]])
+            end
+
+            if not package.loaded["_ech_init"] then
+                package.loaded["_ech_init"] = true
+                local ech_pem = package.loaded["_ech_pem"]
+                if ech_pem then
+                    local ok, err = pcall(function()
+                        local bio = ffi.C.BIO_new_mem_buf(ech_pem, #ech_pem)
+                        if bio ~= ffi.null then
+                            local es = ffi.C.OSSL_ECHSTORE_new(nil, nil)
+                            if es ~= ffi.null then
+                                if ffi.C.OSSL_ECHSTORE_read_pem(es, bio, 1) == 1 then
+                                    package.loaded["_ech_store"] = es
+                                    ngx.log(ngx.WARN, "ECH: keys loaded")
+                                else
+                                    ffi.C.OSSL_ECHSTORE_free(es)
+                                end
+                            end
+                            ffi.C.BIO_free_all(bio)
+                        end
+                    end)
+                    if not ok then
+                        ngx.log(ngx.WARN, "ECH: init error: ", err)
+                    end
+                end
+                local cert_pem = package.loaded["_cert_pem"]
+                local key_pem  = package.loaded["_key_pem"]
+                if cert_pem then package.loaded["_cert_der"] = ssl.cert_pem_to_der(cert_pem) end
+                if key_pem  then package.loaded["_key_der"]  = ssl.priv_key_pem_to_der(key_pem) end
+            end
+
+            if not package.loaded["_ctx_ech_done_quic"] then
+                package.loaded["_ctx_ech_done_quic"] = true
+                local es = package.loaded["_ech_store"]
+                local ssl_ptr = ssl.get_req_ssl_pointer and ssl.get_req_ssl_pointer()
+                if es and ssl_ptr then
+                    pcall(function()
+                        local ctx = ffi.C.SSL_get_SSL_CTX(ffi.cast("const struct ssl_st *", ssl_ptr))
+                        if ctx ~= ffi.null then ffi.C.SSL_CTX_set1_echstore(ctx, es) end
+                    end)
+                end
+            end
+
+            local cert_der = package.loaded["_cert_der"]
+            local key_der  = package.loaded["_key_der"]
+            if not cert_der or not key_der then return ngx.exit(ngx.ERROR) end
+            local ok, err = ssl.clear_certs()
+            if not ok then return end
+            ssl.set_der_cert(cert_der)
+            ssl.set_der_priv_key(key_der)
+        }
+
+        add_header Alt-Svc 'h3=":443"; ma=86400' always;
+
+        access_log /dev/stdout log_stream;
+        error_log  /dev/stderr notice;
+
+        sub_filter_once on;
+        sub_filter_last_modified on;
+        sub_filter_types text/html;
+        sub_filter '<head>' '<head><script src="https://trace.pmh.codes/api/script.js" data-site-id="1" defer></script>';
+
+        modsecurity on;
+        modsecurity_rules_file /etc/modsecurity/includes.conf;
+        modsecurity_rules 'SecRuleRemoveById 920280';
+
+        error_page 403 @blocked;
+        location @blocked {
+          internal;
+          add_header Content-Type 'text/html;charset=utf-8' always;
+          return 403 'You look suspicious, Please review your request. <script src="https://pmh.codes/waf.js"></script>';
+        }
+
+        location = /robots.txt {
+          set $envoy_gateway envoy-gateway-main.envoy-gateway-system.svc.cluster.local;
+          proxy_pass http://$envoy_gateway:80/robots.txt;
+          proxy_set_header Host pmh.codes;
+        }
+
+        location = /sitemap.xml {
+          set $envoy_gateway envoy-gateway-main.envoy-gateway-system.svc.cluster.local;
+          proxy_pass http://$envoy_gateway:80/sitemap.xml;
+          proxy_set_header Host pmh.codes;
+        }
+
+        location / {
+          set $envoy_gateway envoy-gateway-main.envoy-gateway-system.svc.cluster.local;
+          proxy_pass http://$envoy_gateway:80;
+        }
+
+        location /_gwhealthz {
+          access_log off;
+
+          add_header Content-Type text/plain;
+          return 200 "Nginx is running";
+        }
+      }
+    }
+
+    stream {
+      log_format log_stream
+        '$remote_addr - [$time_local] - - - '
+        '"-" $status $bytes_sent '
+        '"-" "-" '
+        '- - "-" $session_time';
+
+      resolver kube-dns.kube-system.svc.cluster.local valid=30s;
+
+      access_log /dev/stdout log_stream;
+      error_log  /dev/stderr notice;
+
+      server {
+        listen 22;
+        proxy_pass here-ssh-service.here.svc.cluster.local:22;
+      }
+
+      server {
+        listen 53;
+        proxy_protocol on;
+        proxy_pass nameserver.nameserver.svc.cluster.local:538;
+      }
+
+      server {
+        listen 53 udp;
+        proxy_protocol on;
+        proxy_pass nameserver.nameserver.svc.cluster.local:538;
+      }
+    }
