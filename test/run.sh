@@ -231,12 +231,8 @@ echo ""
 echo -e "${BOLD}ECH${NC}"
 
 if [ "${ECH_KEY_READY:-false}" = "true" ]; then
-  label "ECH keys loaded (nginx log)"
-  if docker logs "$CONTAINER" 2>&1 | grep -q "ECH.*keys loaded"; then
-    pass
-  else
-    fail "no 'ECH: keys loaded' in nginx log"
-  fi
+  check "nginx config valid with ssl_ech_file" \
+    docker exec "$CONTAINER" /usr/local/openresty/nginx/sbin/nginx -t
 
   label "ECH GREASE accepted"
   ech_err=$(curl_ech_ --ech grease --head "https://localhost:${HTTPS_PORT}/" 2>&1)

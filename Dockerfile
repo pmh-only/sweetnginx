@@ -1,9 +1,10 @@
 # syntax=docker/dockerfile:1.7
 
-ARG OPENRESTY_VERSION=1.27.1.2
+ARG NGINX_VERSION=1.29.4
+ARG HEADERS_MORE_VERSION=v0.38
 ARG MAKE_JOBS=0
 
-FROM openresty/openresty:${OPENRESTY_VERSION}-alpine AS build-base
+FROM alpine:3.21 AS build-base
 
 ENV CC="ccache gcc" \
     CXX="ccache g++" \
@@ -19,19 +20,27 @@ RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
     yajl-dev geoip-dev lmdb-dev libmaxminddb-dev \
     linux-headers brotli-dev zstd-dev perl zlib-dev
 
-FROM build-base AS openresty-src
+FROM build-base AS nginx-src
 
-ARG OPENRESTY_VERSION
+ARG NGINX_VERSION
 
 RUN --mount=type=cache,target=/var/cache/distfiles,sharing=locked \
-    mkdir -p /src/openresty && \
-    wget -nv -O /var/cache/distfiles/openresty-${OPENRESTY_VERSION}.tar.gz \
-    https://openresty.org/download/openresty-${OPENRESTY_VERSION}.tar.gz && \
-    tar xzf /var/cache/distfiles/openresty-${OPENRESTY_VERSION}.tar.gz \
-      --strip-components=1 -C /src/openresty
+    mkdir -p /src/nginx && \
+    wget -nv -O /var/cache/distfiles/nginx-${NGINX_VERSION}.tar.gz \
+    https://nginx.org/download/nginx-${NGINX_VERSION}.tar.gz && \
+    tar xzf /var/cache/distfiles/nginx-${NGINX_VERSION}.tar.gz \
+      --strip-components=1 -C /src/nginx
 
-COPY patches/ /patches/
-RUN patch -p1 -d /src/openresty < /patches/nginx-ssl-ech-key.patch
+FROM build-base AS headers-more-src
+
+ARG HEADERS_MORE_VERSION
+
+RUN --mount=type=cache,target=/var/cache/distfiles,sharing=locked \
+    mkdir -p /src/headers-more-nginx-module && \
+    wget -nv -O /var/cache/distfiles/headers-more-nginx-module-${HEADERS_MORE_VERSION}.tar.gz \
+    https://github.com/openresty/headers-more-nginx-module/archive/refs/tags/${HEADERS_MORE_VERSION}.tar.gz && \
+    tar xzf /var/cache/distfiles/headers-more-nginx-module-${HEADERS_MORE_VERSION}.tar.gz \
+      --strip-components=1 -C /src/headers-more-nginx-module
 
 FROM build-base AS openssl-src
 
@@ -56,8 +65,8 @@ RUN --mount=type=cache,target=/var/cache/distfiles,sharing=locked \
     tar xzf /var/cache/distfiles/openssl-${OPENSSL_ECH_TAG}.tar.gz \
       --strip-components=1 -C /src/openssl-ech
 
-COPY patches/ /patches/
-RUN patch -p1 -d /src/openssl-ech < /patches/openssl-ech-quic-fix.patch
+COPY patches/openssl-ech-quic-fix.patch /src/openssl-ech-quic-fix.patch
+RUN patch -p1 -d /src/openssl-ech < /src/openssl-ech-quic-fix.patch
 
 FROM build-base AS modsecurity-src
 
@@ -169,20 +178,22 @@ RUN --mount=type=cache,target=/root/.cache/ccache,sharing=locked \
 
 FROM build-base AS nginx-builder
 
-ARG OPENRESTY_VERSION
 ARG MAKE_JOBS
 
-COPY --from=openresty-src /src/openresty /build/openresty
+COPY --from=nginx-src /src/nginx /build/nginx
+COPY --from=headers-more-src /src/headers-more-nginx-module /build/headers-more-nginx-module
 COPY --from=openssl-src /src/openssl-ech /build/openssl-ech
 COPY --from=modsec-nginx-src /src/ModSecurity-nginx /build/ModSecurity-nginx
 COPY --from=brotli-src /src/ngx_brotli /build/ngx_brotli
 COPY --from=zstd-src /src/zstd-nginx-module /build/zstd-nginx-module
 COPY --from=modsecurity-builder /usr/local/modsecurity /usr/local/modsecurity
+
 RUN --mount=type=cache,target=/root/.cache/ccache,sharing=locked \
-    cd /build/openresty && \
+    cd /build/nginx && \
     jobs="${MAKE_JOBS}" && \
     if [ "$jobs" = "0" ]; then jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"; fi && \
     ./configure \
+      --prefix=/usr/local/openresty/nginx \
       --with-compat \
       --with-file-aio \
       --with-http_addition_module \
@@ -205,32 +216,31 @@ RUN --mount=type=cache,target=/root/.cache/ccache,sharing=locked \
       --with-stream \
       --with-stream_ssl_module \
       --with-stream_ssl_preread_module \
+      --with-mail \
+      --with-mail_ssl_module \
       --with-threads \
       --with-openssl=/build/openssl-ech \
-      --with-ld-opt="-Wl,--export-dynamic -u SSL_CTX_set1_echstore" \
+      --add-module=/build/headers-more-nginx-module \
       --add-dynamic-module=/build/ModSecurity-nginx \
       --add-dynamic-module=/build/ngx_brotli \
       --add-dynamic-module=/build/zstd-nginx-module && \
     make -j"$jobs" && \
-    NGINX_VERSION=$(echo "${OPENRESTY_VERSION}" | cut -d. -f1-3) && \
-    mkdir -p /build/custom-modules && \
-    cp build/nginx-${NGINX_VERSION}/objs/ngx_http_*.so /build/custom-modules/ && \
-    cp build/nginx-${NGINX_VERSION}/objs/nginx /build/nginx-ech
+    make install && \
+    mkdir -p /usr/local/openresty/nginx/modules && \
+    cp objs/ngx_http_*.so /usr/local/openresty/nginx/modules/
 
-FROM openresty/openresty:${OPENRESTY_VERSION}-alpine
+FROM alpine:3.21
 
 RUN --mount=type=cache,target=/var/cache/apk,sharing=locked \
     apk add --update-cache \
-    libxml2 libcurl yajl geoip lmdb libmaxminddb pcre2 brotli zstd-libs
+    libxml2 libcurl yajl geoip lmdb libmaxminddb pcre2 brotli zstd-libs libstdc++
 
 COPY --from=modsecurity-builder \
     /usr/local/modsecurity /usr/local/modsecurity
-COPY --from=nginx-builder \
-    /build/custom-modules/ /usr/local/openresty/nginx/modules/
 COPY --from=openssl-builder \
     /usr/local/bin/openssl-ech /usr/local/bin/openssl-ech
 COPY --from=nginx-builder \
-    /build/nginx-ech /usr/local/openresty/nginx/sbin/nginx
+    /usr/local/openresty/nginx /usr/local/openresty/nginx
 COPY --from=crs-src \
     /src/crs /etc/modsecurity/crs
 COPY --from=modsecurity-builder \
@@ -251,3 +261,5 @@ COPY conf/modsecurity-includes.conf /etc/modsecurity/includes.conf
 
 COPY scripts/gen-ech-keys.sh /usr/local/bin/gen-ech-keys
 RUN chmod +x /usr/local/bin/gen-ech-keys
+
+ENTRYPOINT ["/usr/local/openresty/nginx/sbin/nginx", "-g", "daemon off;"]

@@ -2,7 +2,7 @@
 
 ECH (Encrypted Client Hello) encrypts the TLS ClientHello so the real SNI is not visible to on-path observers.  The server decrypts the inner ClientHello and confirms ECH to the client.  Inner-SNI routing is not performed — the server serves one certificate unconditionally.
 
-ECH applies to both TLS and QUIC (HTTP/3) connections.  Each server block has its own SSL_CTX; both receive the ECH store on the first connection per worker.
+ECH applies to both TLS and QUIC (HTTP/3) connections.  TLS and QUIC listeners may share a single `server { }` block; nginx applies the ECH store to each SSL_CTX at configuration time.
 
 ---
 
@@ -45,7 +45,7 @@ docker run -d \
   <image>
 ```
 
-The ECH store is loaded into the TLS and QUIC SSL_CTXs on the first connection handled by each nginx worker.  If the key file is absent the container still starts and HTTPS works normally without ECH.
+If the key file is absent the container still starts and HTTPS works normally without ECH.
 
 ---
 
@@ -79,15 +79,6 @@ DNS propagation time depends on your TTL.  Until the record propagates, clients 
 
 ## 4. Verify
 
-**Check that nginx loaded the ECH keys:**
-
-```sh
-docker logs <container> 2>&1 | grep ECH
-# ECH: keys loaded from "/etc/nginx/ech/server.ech.pem"
-```
-
-One log line appears per SSL_CTX (one per server block that inherits the directive).
-
 **Test with curl (requires ECH-capable build):**
 
 ```sh
@@ -106,18 +97,18 @@ Open `https://example.com/` in Chrome or Firefox.  Navigate to `chrome://net-int
 
 ## 5. nginx.conf integration
 
-The TLS (`listen 443 ssl`) and QUIC (`listen 443 quic`) blocks must be **separate server blocks**.  ECH is configured with a single native directive in the `http` block — no Lua required.
-
-**In `http { ... }`:**
+Add `ssl_ech_file` to the HTTPS server block:
 
 ```nginx
-ssl_ech_key /etc/nginx/ech/server.ech.pem;
+server {
+    listen 443 ssl;
+    listen 443 quic reuseport;
+    ssl_ech_file /etc/nginx/ech/server.ech.pem;
+    ...
+}
 ```
 
-This directive is processed at configuration time.  It reads the ECH PEM file, builds an `OSSL_ECHSTORE`, and calls `SSL_CTX_set1_echstore` on every SSL_CTX in the virtual host — including both TLS and QUIC server blocks.  If the key file is absent, nginx logs an error and refuses to start; remove the directive if you do not want ECH.
-
-The directive may also be placed at the `server { ... }` level to apply ECH only to specific virtual hosts.
-
+The directive may also be placed at the `http { ... }` level to apply ECH to all virtual hosts.  It is processed at configuration time.  If the key file is absent, nginx logs an error and refuses to start; remove the directive if you do not want ECH.
 
 ---
 
@@ -140,8 +131,8 @@ The directive may also be placed at the `server { ... }` level to apply ECH only
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| nginx fails to start: `BIO_new_file` or `OSSL_ECHSTORE_read_pem` error | Key file missing or unreadable | Check the volume mount and file permissions |
-| `ERR_ECH_FALLBACK_CERTIFICATE_INVALID` | ECH store not set on SSL_CTX | Ensure `ssl_ech_key` directive is present and the key file is mounted |
+| nginx fails to start: `ssl_ech_file` error | Key file missing or unreadable | Check the volume mount and file permissions |
+| `ERR_ECH_FALLBACK_CERTIFICATE_INVALID` | ECH not configured on SSL_CTX | Ensure `ssl_ech_file` directive is present and the key file is mounted |
 | Browser shows plaintext SNI | DNS `HTTPS` record missing or not propagated | Verify record with `dig HTTPS example.com` |
 | Browser uses HTTP/2 instead of HTTP/3 after ECH enabled | DNS `HTTPS` record missing `alpn="h3 h2"` — browsers use the HTTPS RR exclusively and ignore Alt-Svc | Add `alpn="h3 h2"` to the HTTPS record alongside `ech=` |
 | HTTP/3 connections fail after ECH store is set | Unpatched OpenSSL — `ossl_ech_early_decrypt` crashes on QUIC packet format | Ensure the image was built with `patches/openssl-ech-quic-fix.patch` applied |

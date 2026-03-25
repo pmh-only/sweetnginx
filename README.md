@@ -6,7 +6,8 @@ nginx container image with some sugars for my homelab server
 
 | Component | Version |
 |-----------|---------|
-| OpenResty | 1.27.1.2 |
+| nginx | 1.29.4 |
+| headers-more-nginx-module | v0.38 |
 | ModSecurity | v3.0.14 |
 | ModSecurity-nginx connector | v1.0.4 |
 | OWASP Core Rule Set | v4.24.0 |
@@ -41,40 +42,17 @@ nginx container image with some sugars for my homelab server
 | `mail_ssl_module` | TLS for mail proxy |
 | `threads` | Thread pool support |
 | `pcre-jit` | JIT-compiled regex |
+| `headers-more-nginx-module` | Arbitrary add/set/clear of request and response headers |
 
 ### Dynamic
 
 | Module | Description |
 |--------|-------------|
-| `http_geoip_module` | GeoIP-based routing (MaxMind legacy) |
-| `http_image_filter_module` | On-the-fly image resizing/cropping |
-| `http_xslt_module` | XSLT response transformation |
 | `ngx_http_modsecurity_module` | ModSecurity WAF ← added by this image |
 | `ngx_http_brotli_filter_module` | Dynamic Brotli compression ← added by this image |
 | `ngx_http_brotli_static_module` | Serve pre-compressed `.br` files ← added by this image |
 | `ngx_http_zstd_filter_module` | Dynamic Zstd compression ← added by this image |
 | `ngx_http_zstd_static_module` | Serve pre-compressed `.zst` files ← added by this image |
-
-### OpenResty additions (static)
-
-| Module | Description |
-|--------|-------------|
-| `ngx_devel_kit` | Module development kit (NDK) |
-| `echo-nginx-module` | `echo`, `echo_exec`, etc. for config scripting |
-| `set-misc-nginx-module` | Extra `set_*` directives (MD5, SHA1, base64, escaping…) |
-| `headers-more-nginx-module` | Arbitrary add/set/clear of request and response headers |
-| `ngx_lua` | Lua scripting via LuaJIT |
-| `ngx_lua_upstream` | Upstream manipulation from Lua |
-| `ngx_stream_lua` | Lua scripting in stream (TCP/UDP) context |
-| `srcache-nginx-module` | Transparent subrequest-based caching |
-| `memc-nginx-module` | Memcached upstream with extended commands |
-| `redis2-nginx-module` | Redis 2.x upstream |
-| `redis-nginx-module` | Redis upstream |
-| `form-input-nginx-module` | Parse `application/x-www-form-urlencoded` POST bodies |
-| `array-var-nginx-module` | Array variables in nginx config |
-| `encrypted-session-nginx-module` | Encrypt/decrypt nginx variables |
-| `xss-nginx-module` | Native JSONP/cross-site support |
-| `ngx_coolkit` | Small utility directives |
 
 ## ECH (Encrypted Client Hello)
 
@@ -84,7 +62,7 @@ See [APPLY_ECH.md](APPLY_ECH.md) for key generation, DNS publishing, verificatio
 
 ### Implementation notes
 
-ECH is applied to both the TLS (`listen 443 ssl`) and QUIC (`listen 443 quic`) SSL_CTXs via `SSL_CTX_set1_echstore`, called at configuration time from the native `ssl_ech_key` directive added to `ngx_http_ssl_module` via `patches/nginx-ssl-ech-key.patch`.  The server decrypts the inner ClientHello and sends `ech_ok`, satisfying browsers that enforce ECH confirmation.  Inner-SNI routing is not performed — the server has one certificate and serves it unconditionally.  A second patch to defo-project OpenSSL (`patches/openssl-ech-quic-fix.patch`) guards the QUIC code path in `ossl_ech_early_decrypt` against packet-format differences, preventing crashes on QUIC connections when the ECH store is active.
+ECH is supported natively by nginx 1.29.4 via the `ssl_ech_file` directive, using the defo-project OpenSSL ECH feature branch as the TLS backend.  TLS and QUIC (HTTP/3) server blocks may share a single `server { }` block; nginx applies the ECH store to each SSL_CTX at configuration time.  A patch to defo-project OpenSSL (`patches/openssl-ech-quic-fix.patch`) guards `ossl_ech_early_decrypt` against QUIC packet-format differences, preventing crashes on QUIC connections when the ECH store is active.
 
 ## Version updates
 
