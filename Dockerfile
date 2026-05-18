@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 
-ARG NGINX_VERSION=1.29.4
-ARG HEADERS_MORE_VERSION=v0.38
+ARG NGINX_VERSION=1.31.0
+ARG HEADERS_MORE_VERSION=v0.39
 ARG MAKE_JOBS=0
 
 FROM alpine:3.21 AS build-base
@@ -70,7 +70,7 @@ RUN patch -p1 -d /src/openssl-ech < /src/openssl-ech-quic-fix.patch
 
 FROM build-base AS modsecurity-src
 
-ARG MODSECURITY_VERSION=v3.0.14
+ARG MODSECURITY_VERSION=v3.0.15
 
 RUN --mount=type=cache,target=/var/cache/git,sharing=locked \
     set -eu; \
@@ -140,7 +140,7 @@ RUN --mount=type=cache,target=/var/cache/distfiles,sharing=locked \
 
 FROM build-base AS crs-src
 
-ARG CRS_VERSION=v4.24.0
+ARG CRS_VERSION=v4.26.0
 
 RUN --mount=type=cache,target=/var/cache/distfiles,sharing=locked \
     mkdir -p /src/crs && \
