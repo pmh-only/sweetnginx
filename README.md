@@ -1,3 +1,6 @@
+> [!WARNING]  
+> This repository is obsoleted. See [pmh-only/nginx](https://github.com/pmh-only/nginx)
+
 # sweetnginx
 
 nginx container image with some sugars for my homelab server
