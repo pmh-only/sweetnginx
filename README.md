@@ -6,11 +6,11 @@ nginx container image with some sugars for my homelab server
 
 | Component | Version |
 |-----------|---------|
-| nginx | 1.31.0 |
-| headers-more-nginx-module | v0.39 |
-| ModSecurity | v3.0.15 |
+| nginx | 1.31.5 |
+| headers-more-nginx-module | v0.40 |
+| ModSecurity | v3.0.16 |
 | ModSecurity-nginx connector | v1.0.4 |
-| OWASP Core Rule Set | v4.26.0 |
+| OWASP Core Rule Set | v4.29.0 |
 | ECH OpenSSL (defo-project) | 3.9.0-ech |
 
 ## Nginx modules
